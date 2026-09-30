@@ -111,17 +111,30 @@ interface PendingRow {
   username: string;
 }
 
+export function cardStatement(db: D1Database, playerId: number): D1PreparedStatement {
+  return db
+    .prepare(
+      `SELECT c.pos, c.state, c.phrase_id, p.text
+       FROM cells c JOIN phrases p ON p.id = c.phrase_id
+       WHERE c.player_id = ? ORDER BY c.pos`,
+    )
+    .bind(playerId);
+}
+
+export function toCard(result: D1Result) {
+  return (result.results as unknown as CardRow[]).map((c) => ({
+    pos: c.pos,
+    phraseId: c.phrase_id,
+    text: c.text,
+    state: c.state,
+  }));
+}
+
 // Everything the client renders, fetched in one D1 round trip.
 export async function buildState(db: D1Database, player: PlayerRow) {
   const statements = [
     db.prepare("SELECT value FROM meta WHERE key = 'version'"),
-    db
-      .prepare(
-        `SELECT c.pos, c.state, c.phrase_id, p.text
-         FROM cells c JOIN phrases p ON p.id = c.phrase_id
-         WHERE c.player_id = ? ORDER BY c.pos`,
-      )
-      .bind(player.id),
+    cardStatement(db, player.id),
     db.prepare(
       `SELECT id, username, points, lines, line_at, bingo_at FROM players
        ORDER BY bingo_at IS NULL, bingo_at, lines DESC, points DESC, line_at IS NULL, line_at, username_lc`,
@@ -152,12 +165,7 @@ export async function buildState(db: D1Database, player: PlayerRow) {
       points: player.points,
       lines: player.lines,
       bingo: player.bingo_at !== null,
-      card: (card.results as unknown as CardRow[]).map((c) => ({
-        pos: c.pos,
-        phraseId: c.phrase_id,
-        text: c.text,
-        state: c.state,
-      })),
+      card: toCard(card),
     },
     phraseCount: (phraseCount.results[0] as { n: number }).n,
     leaderboard: (leaderboard.results as unknown as LeaderRow[]).map((r) => ({
