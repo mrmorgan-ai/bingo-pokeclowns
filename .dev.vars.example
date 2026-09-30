@@ -1,0 +1,4 @@
+# Copy to .dev.vars for local development (never commit .dev.vars).
+# In production set these with: npx wrangler secret put <NAME>
+SESSION_SECRET="change-me-to-a-long-random-string"
+INVITE_CODE="pokeclowns"
