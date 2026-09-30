@@ -25,6 +25,8 @@ let pollEnCurso = null;
 let fallosSeguidos = 0;
 let frasesEditadas = false;
 let anterior = null; // { lines, bingo } from the previous render, to celebrate transitions
+// Control tab: player list, selected player id, and that player's { player, card } once loaded.
+const control = { jugadores: [], seleccionado: null, detalle: null, filtro: "" };
 
 // ---------------------------------------------------------------- API
 
@@ -299,11 +301,13 @@ function aplicarEstado(data) {
   $("nombreEntrenador").textContent = me.username;
   mostrar("insigniaModerador", me.isAdmin);
   mostrar("tabAdmin", me.isAdmin);
-  if (!me.isAdmin && tabActual === "admin") cambiarTab("bingo");
+  mostrar("tabControl", me.isAdmin);
+  if (!me.isAdmin && (tabActual === "admin" || tabActual === "control")) cambiarTab("bingo");
 
   renderCarton();
   renderLeaderboard();
   if (me.isAdmin && data.admin) renderAdmin();
+  if (me.isAdmin && tabActual === "control") cargarControl();
 
   if (anterior) {
     if (me.bingo && !anterior.bingo) mostrarVictoriaBingo();
@@ -315,14 +319,15 @@ function aplicarEstado(data) {
   anterior = { lines: me.lines, bingo: me.bingo };
 }
 
-function renderCarton() {
-  const me = estado.me;
-  const grid = $("gridBingo");
-  const tieneCarton = me.card.length === CARD_SIZE;
-  mostrar("gridBingo", tieneCarton);
-  mostrar("sinCarton", !tieneCarton);
+const TITULOS_JUGADOR = {
+  approved: "Aprobada",
+  pending: "Toca para cancelar la solicitud",
+  none: "Toca para pedir validación",
+};
 
-  const aprobado = (g) => g === FREE_INDEX || me.card[gridToPos(g)]?.state === "approved";
+// Builds the 25 grid buttons for a card; used by the player's own card and the Control panel.
+function crearCasillas(card, { alTocar, titulos, aprobadaTocable = false, compacto = false }) {
+  const aprobado = (g) => g === FREE_INDEX || card[gridToPos(g)]?.state === "approved";
   const enLinea = new Set(GRID_LINES.filter((line) => line.every(aprobado)).flat());
 
   let pendientes = 0;
@@ -331,7 +336,8 @@ function renderCarton() {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className =
-      "aspect-square p-1.5 sm:p-2 rounded-xl text-[10px] sm:text-xs font-semibold transition-all duration-200 flex flex-col items-center justify-center text-center border break-words leading-tight overflow-hidden ";
+      (compacto ? "p-1 text-[9px] rounded-lg " : "p-1.5 text-[10px] rounded-xl ") +
+      "aspect-square sm:p-2 sm:text-xs font-semibold transition-all duration-200 flex flex-col items-center justify-center text-center border break-words hyphens-auto leading-tight overflow-hidden ";
 
     if (g === FREE_INDEX) {
       btn.className += "bg-yellow-500/20 border-yellow-500 text-yellow-300 font-pixel text-[9px] cursor-default";
@@ -341,7 +347,7 @@ function renderCarton() {
       continue;
     }
 
-    const casilla = me.card[gridToPos(g)];
+    const casilla = card[gridToPos(g)];
     if (!casilla) {
       casillas.push(btn);
       continue;
@@ -349,23 +355,33 @@ function renderCarton() {
     const linea = enLinea.has(g) ? " ring-2 ring-sky-400" : "";
 
     if (casilla.state === "approved") {
-      btn.className += "bg-green-600 border-green-400 text-white shadow-lg cursor-default" + linea;
-      btn.append(span(casilla.text, "line-through opacity-80"), span("✅", "text-[10px] mt-1"));
-      btn.title = "Aprobada";
+      btn.className += "bg-green-600 border-green-400 text-white shadow-lg" + (aprobadaTocable ? " hover:border-white" : " cursor-default") + linea;
+      btn.append(span(casilla.text, "line-through opacity-80"), span("✅", "text-[10px] mt-0.5 sm:mt-1"));
     } else if (casilla.state === "pending") {
       pendientes++;
       btn.className += "bg-yellow-600/40 border-yellow-500 text-yellow-200 animate-pulse";
-      btn.append(span(casilla.text), span("⏳ Pendiente", "text-[10px] mt-1"));
-      btn.title = "Toca para cancelar la solicitud";
+      const etiqueta = span("⏳", "text-[10px] mt-0.5 sm:mt-1");
+      etiqueta.append(span(" Pendiente", "hidden sm:inline"));
+      btn.append(span(casilla.text), etiqueta);
     } else {
       btn.className += "bg-slate-800 border-slate-700 text-slate-200 hover:border-slate-500";
       btn.textContent = casilla.text;
-      btn.title = "Toca para pedir validación";
     }
-    btn.addEventListener("click", () => marcarCasilla(casilla));
+    btn.title = titulos[casilla.state];
+    btn.addEventListener("click", () => alTocar(casilla));
     casillas.push(btn);
   }
-  grid.replaceChildren(...casillas);
+  return { casillas, pendientes };
+}
+
+function renderCarton() {
+  const me = estado.me;
+  const tieneCarton = me.card.length === CARD_SIZE;
+  mostrar("gridBingo", tieneCarton);
+  mostrar("sinCarton", !tieneCarton);
+
+  const { casillas, pendientes } = crearCasillas(me.card, { alTocar: marcarCasilla, titulos: TITULOS_JUGADOR });
+  $("gridBingo").replaceChildren(...casillas);
 
   $("lineasTexto").textContent = me.lines;
   $("puntosTexto").textContent = me.points;
@@ -477,30 +493,6 @@ function renderAdmin() {
     txt.value = phrases.map((p) => p.text).join("\n");
     actualizarContadorFrases();
   }
-
-  $("listaJugadores").replaceChildren(
-    ...estado.leaderboard.map((j) => {
-      const li = document.createElement("li");
-      li.className = "py-2.5 flex items-center justify-between gap-2";
-      li.append(span(j.id === estado.me.id ? `${j.username} (tú)` : j.username, "font-semibold text-slate-200 truncate"));
-      const botones = document.createElement("div");
-      botones.className = "flex gap-2 shrink-0";
-      const reset = document.createElement("button");
-      reset.className = "text-[11px] bg-slate-700 hover:bg-slate-600 text-slate-200 px-2.5 py-1 rounded-lg transition";
-      reset.textContent = "🔑 Reset clave";
-      reset.addEventListener("click", () => resetearClave(j));
-      botones.append(reset);
-      if (j.id !== estado.me.id) {
-        const eliminar = document.createElement("button");
-        eliminar.className = "text-[11px] bg-red-700/80 hover:bg-red-600 text-white px-2.5 py-1 rounded-lg transition";
-        eliminar.textContent = "Eliminar";
-        eliminar.addEventListener("click", () => eliminarJugador(j));
-        botones.append(eliminar);
-      }
-      li.append(botones);
-      return li;
-    }),
-  );
 }
 
 function frasesDelTexto() {
@@ -527,6 +519,7 @@ function cambiarTab(tab) {
     btn.classList.remove("border-red-500", "text-red-500", "border-yellow-500", "text-yellow-400", "border-transparent", "text-slate-400", "hover:text-white");
     btn.classList.add(...(activo ? colorActivo : "border-transparent text-slate-400 hover:text-white").split(" "));
   });
+  if (tab === "control") cargarControl();
 }
 
 // ---------------------------------------------------------------- Game actions
@@ -622,8 +615,217 @@ async function eliminarJugador(jugador) {
     peligro: true,
   });
   if (ok) {
-    await accion(() => api(`/api/admin/players/${jugador.id}`, { method: "DELETE" }), {
-      exito: `${jugador.username} fue eliminado.`,
+    await accion(
+      async () => {
+        await api(`/api/admin/players/${jugador.id}`, { method: "DELETE" });
+        if (control.seleccionado === jugador.id) seleccionarJugador(null);
+      },
+      { exito: `${jugador.username} fue eliminado.` },
+    );
+  }
+}
+
+// ---------------------------------------------------------------- Control panel
+
+const TITULOS_CONTROL = {
+  approved: "Toca para quitar la aprobación",
+  pending: "Toca para aprobar o rechazar",
+  none: "Toca para aprobar directamente",
+};
+
+// Loads the player list and the selected card. Runs when the tab opens and whenever the
+// polled version changes while it is open, so it only costs requests for the moderator.
+let controlSeq = 0;
+async function cargarControl() {
+  const seq = ++controlSeq;
+  try {
+    const id = control.seleccionado;
+    const [lista, detalle] = await Promise.all([
+      api("/api/admin/players"),
+      id === null
+        ? null
+        : api(`/api/admin/players/${id}/card`).catch((err) => {
+            if (err.status === 404) return null;
+            throw err;
+          }),
+    ]);
+    if (seq !== controlSeq) return; // a newer load started meanwhile
+    control.jugadores = lista.players;
+    if (control.seleccionado === id) {
+      control.detalle = detalle;
+      if (!detalle) control.seleccionado = null;
+    }
+    renderControl();
+  } catch (err) {
+    if (err.status === 401) return sesionExpirada();
+    if (err.status !== 403) toast(err.message, "error");
+  }
+}
+
+function seleccionarJugador(id) {
+  control.seleccionado = id;
+  control.detalle = null;
+  renderControl();
+  if (id !== null) cargarControl();
+}
+
+function insignias(j) {
+  return [j.isAdmin ? "👑" : "", j.locked ? "🔒" : ""].filter(Boolean).join(" ");
+}
+
+function renderControl() {
+  const filtro = control.filtro.toLowerCase();
+  const visibles = control.jugadores.filter((j) => j.username.toLowerCase().includes(filtro));
+  $("controlTotal").textContent = control.jugadores.length;
+
+  $("controlLista").replaceChildren(
+    ...(visibles.length === 0
+      ? [span("Ningún entrenador coincide.", "block text-xs text-slate-500 text-center py-4")]
+      : visibles.map((j) => {
+          const li = document.createElement("li");
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className =
+            "w-full text-left px-3 py-2 rounded-xl border transition flex items-center justify-between gap-2 " +
+            (j.id === control.seleccionado
+              ? "bg-yellow-500/10 border-yellow-500/60"
+              : "border-transparent hover:bg-slate-700/40");
+          const info = document.createElement("div");
+          info.className = "min-w-0";
+          const nombre = j.id === estado.me.id ? `${j.username} (tú)` : j.username;
+          info.append(
+            span(`${nombre} ${insignias(j)}`.trim(), "block text-sm font-semibold text-slate-100 truncate"),
+            span(`L${j.lines} · ${j.points}/24 · 🔀${j.rerolls}`, "block text-[11px] text-slate-400"),
+          );
+          const chips = document.createElement("div");
+          chips.className = "flex gap-1 shrink-0";
+          if (j.bingo) chips.append(span("BINGO", "px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-500/20 text-green-400"));
+          if (j.pending > 0) chips.append(span(`⏳ ${j.pending}`, "px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-500/20 text-yellow-400"));
+          btn.append(info, chips);
+          btn.addEventListener("click", () => seleccionarJugador(j.id));
+          li.append(btn);
+          return li;
+        })),
+  );
+
+  const detalle = control.detalle;
+  mostrar("controlDetalle", Boolean(detalle));
+  mostrar("controlVacio", !detalle);
+  if (!detalle) {
+    $("controlVacio").textContent =
+      control.seleccionado === null ? "Selecciona un entrenador para ver su cartón." : "Cargando cartón...";
+    return;
+  }
+
+  const j = detalle.player;
+  const esYo = j.id === estado.me.id;
+  $("controlNombre").textContent = esYo ? `${j.username} (tú)` : j.username;
+  $("controlInsignias").textContent = insignias(j);
+  const [etiqueta, color] = j.bingo
+    ? ["¡BINGO!", "bg-green-500/20 text-green-400"]
+    : j.lines > 0
+      ? [j.lines === 1 ? "LÍNEA" : `LÍNEA ×${j.lines}`, "bg-sky-500/20 text-sky-400"]
+      : ["En Juego", "bg-yellow-500/20 text-yellow-400"];
+  $("controlEstado").textContent = etiqueta;
+  $("controlEstado").className = `px-2 py-1 rounded-full text-[10px] font-bold ${color}`;
+  $("controlLineas").textContent = j.lines;
+  $("controlPuntos").textContent = `${j.points}/24`;
+  $("controlPendientes").textContent = j.pending;
+  $("controlRerolls").textContent = `${j.rerolls}/${j.maxRerolls}`;
+
+  const { casillas } = crearCasillas(detalle.card, {
+    alTocar: (casilla) => accionCasilla(j, casilla),
+    titulos: TITULOS_CONTROL,
+    aprobadaTocable: true,
+    compacto: true,
+  });
+  $("gridControl").replaceChildren(...casillas);
+
+  $("ctlModerador").textContent = j.isAdmin ? "👑 Quitar moderador" : "👑 Hacer moderador";
+  mostrar("ctlModerador", !esYo);
+  $("ctlDesbloquear").disabled = !j.locked;
+  $("ctlReroll").disabled = j.rerolls >= j.maxRerolls;
+  $("ctlRerollMax").disabled = j.rerolls >= j.maxRerolls;
+  mostrar("ctlEliminar", !esYo);
+}
+
+function elegir({ titulo, texto, detalle, opciones }) {
+  $("elegirTitulo").textContent = titulo;
+  $("elegirTexto").textContent = texto;
+  $("elegirDetalle").textContent = detalle;
+  mostrar("modalElegir", true);
+  return new Promise((resolve) => {
+    const cerrar = (valor) => {
+      mostrar("modalElegir", false);
+      resolve(valor);
+    };
+    $("elegirOpciones").replaceChildren(
+      ...[...opciones, { valor: null, texto: "Cancelar", clase: "bg-slate-700 text-slate-300" }].map((o) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `w-full font-bold py-2 rounded-xl text-xs transition ${o.clase}`;
+        btn.textContent = o.texto;
+        btn.addEventListener("click", () => cerrar(o.valor));
+        return btn;
+      }),
+    );
+  });
+}
+
+async function accionCasilla(jugador, casilla) {
+  const aprobar = { valor: "approve", texto: "✅ Aprobar", clase: "bg-green-600 hover:bg-green-500 text-white" };
+  const opciones = {
+    pending: [aprobar, { valor: "reject", texto: "❌ Rechazar", clase: "bg-red-600 hover:bg-red-500 text-white" }],
+    none: [{ ...aprobar, texto: "✅ Aprobar directamente" }],
+    approved: [{ valor: "revoke", texto: "↩ Quitar aprobación", clase: "bg-yellow-500 hover:bg-yellow-400 text-slate-950" }],
+  }[casilla.state];
+  const estados = { pending: "⏳ Pendiente de validar", none: "Sin marcar", approved: "✅ Aprobada" };
+  const accionElegida = await elegir({
+    titulo: `Cartón de ${jugador.username}`,
+    texto: `"${casilla.text}"`,
+    detalle: estados[casilla.state],
+    opciones,
+  });
+  if (!accionElegida) return;
+  const mensajes = { approve: "Casilla aprobada.", reject: "Solicitud rechazada.", revoke: "Aprobación quitada." };
+  await accion(
+    () => api(`/api/admin/players/${jugador.id}/cells/${casilla.pos}`, { method: "POST", body: { action: accionElegida } }),
+    { exito: mensajes[accionElegida] },
+  );
+}
+
+async function actualizarJugador(cambios, exito) {
+  const j = control.detalle?.player;
+  if (!j) return;
+  await accion(() => api(`/api/admin/players/${j.id}`, { method: "PATCH", body: cambios }), { exito });
+}
+
+async function cambiarModerador() {
+  const j = control.detalle?.player;
+  if (!j) return;
+  const ok = await confirmar({
+    titulo: j.isAdmin ? "¿Quitar moderador?" : "¿Hacer moderador?",
+    texto: j.isAdmin
+      ? `${j.username} dejará de ver los paneles de moderación.`
+      : `${j.username} podrá aprobar frases y gestionar a todos los entrenadores.`,
+    si: "👑 Confirmar",
+    peligro: j.isAdmin,
+  });
+  if (ok) await actualizarJugador({ isAdmin: !j.isAdmin }, j.isAdmin ? "Ya no es moderador." : "¡Nuevo moderador!");
+}
+
+async function repartirCarton() {
+  const j = control.detalle?.player;
+  if (!j) return;
+  const ok = await confirmar({
+    titulo: "¿Cartón nuevo?",
+    texto: `${j.username} recibirá las frases en otro orden y perderá su progreso. Sus rerolls no cambian.`,
+    si: "♻️ Repartir",
+    peligro: true,
+  });
+  if (ok) {
+    await accion(() => api(`/api/admin/players/${j.id}/reset-card`, { method: "POST" }), {
+      exito: `Cartón nuevo para ${j.username}.`,
     });
   }
 }
@@ -649,6 +851,23 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("btnReroll").addEventListener("click", ejecutarReroll);
   $("btnGuardarFrases").addEventListener("click", guardarFrases);
   $("btnVaciar").addEventListener("click", vaciarLeaderboard);
+  $("controlBuscar").addEventListener("input", (e) => {
+    control.filtro = e.target.value;
+    renderControl();
+  });
+  $("ctlModerador").addEventListener("click", cambiarModerador);
+  $("ctlDesbloquear").addEventListener("click", () => actualizarJugador({ unlock: true }, "Cuenta desbloqueada."));
+  $("ctlReroll").addEventListener("click", () => {
+    const j = control.detalle?.player;
+    if (j) actualizarJugador({ rerolls: Math.min(j.rerolls + 1, j.maxRerolls) }, "+1 reroll.");
+  });
+  $("ctlRerollMax").addEventListener("click", () => {
+    const j = control.detalle?.player;
+    if (j) actualizarJugador({ rerolls: j.maxRerolls }, `Rerolls a ${j.maxRerolls}.`);
+  });
+  $("ctlCarton").addEventListener("click", repartirCarton);
+  $("ctlClave").addEventListener("click", () => control.detalle && resetearClave(control.detalle.player));
+  $("ctlEliminar").addEventListener("click", () => control.detalle && eliminarJugador(control.detalle.player));
   $("txtFrasesAdmin").addEventListener("input", () => {
     frasesEditadas = true;
     actualizarContadorFrases();

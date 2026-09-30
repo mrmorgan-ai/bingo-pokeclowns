@@ -18,9 +18,11 @@ import {
   RESET_STATS_SQL,
   buildState,
   bumpVersion,
+  cardStatement,
   dealCards,
   getVersion,
   recomputeStats,
+  toCard,
   type PlayerRow,
 } from "./game";
 import { HttpError, Router, json, readJson } from "./http";
@@ -53,6 +55,49 @@ function parseId(value: string | undefined): number {
   if (!Number.isInteger(id) || id < 0) throw new HttpError(400, "Identificador inválido.");
   return id;
 }
+
+interface AdminPlayerRow {
+  id: number;
+  username: string;
+  is_admin: number;
+  rerolls: number;
+  points: number;
+  lines: number;
+  bingo_at: number | null;
+  locked_until: number;
+}
+
+const ADMIN_PLAYER_COLUMNS = "id, username, is_admin, rerolls, points, lines, bingo_at, locked_until";
+
+function toAdminPlayer(row: AdminPlayerRow, pending: number) {
+  return {
+    id: row.id,
+    username: row.username,
+    isAdmin: Boolean(row.is_admin),
+    rerolls: row.rerolls,
+    maxRerolls: MAX_REROLLS,
+    points: row.points,
+    lines: row.lines,
+    bingo: row.bingo_at !== null,
+    locked: row.locked_until > Date.now(),
+    pending,
+  };
+}
+
+async function requireTarget(env: Env, id: number): Promise<AdminPlayerRow> {
+  const row = await env.DB.prepare(`SELECT ${ADMIN_PLAYER_COLUMNS} FROM players WHERE id = ?`)
+    .bind(id)
+    .first<AdminPlayerRow>();
+  if (!row) throw new HttpError(404, "Ese entrenador no existe.");
+  return row;
+}
+
+// Moderator actions on a single square of one player's card.
+const CELL_ACTIONS = {
+  approve: { sql: "state = 'approved' WHERE state != 'approved'", error: "Esa casilla ya está aprobada." },
+  reject: { sql: "state = 'none' WHERE state = 'pending'", error: "Esa casilla no está pendiente." },
+  revoke: { sql: "state = 'none' WHERE state = 'approved'", error: "Esa casilla no está aprobada." },
+} as const;
 
 async function withSession(env: Env, player: { id: number; session_gen: number }, body: unknown): Promise<Response> {
   return json(body, { headers: { "set-cookie": await createSessionCookie(env, player.id, player.session_gen) } });
@@ -263,6 +308,91 @@ const router = new Router()
       .first<{ username: string }>();
     if (!updated) throw new HttpError(404, "Ese entrenador no existe.");
     return json({ username: updated.username, password });
+  })
+
+  // ---------- Control panel: per-player management ----------
+  .on("GET", "/api/admin/players", async (request, env) => {
+    await requireAdmin(request, env);
+    const [players, pending] = await env.DB.batch([
+      env.DB.prepare(`SELECT ${ADMIN_PLAYER_COLUMNS} FROM players ORDER BY username_lc`),
+      env.DB.prepare("SELECT player_id, COUNT(*) AS n FROM cells WHERE state = 'pending' GROUP BY player_id"),
+    ]);
+    const pendingBy = new Map(
+      (pending.results as unknown as { player_id: number; n: number }[]).map((r) => [r.player_id, r.n]),
+    );
+    return json({
+      players: (players.results as unknown as AdminPlayerRow[]).map((r) => toAdminPlayer(r, pendingBy.get(r.id) ?? 0)),
+    });
+  })
+
+  .on("GET", "/api/admin/players/:id/card", async (request, env, params) => {
+    await requireAdmin(request, env);
+    const target = await requireTarget(env, parseId(params.id));
+    const card = toCard(await cardStatement(env.DB, target.id).run());
+    const pending = card.filter((c) => c.state === "pending").length;
+    return json({ player: toAdminPlayer(target, pending), card });
+  })
+
+  .on("POST", "/api/admin/players/:id/cells/:pos", async (request, env, params) => {
+    await requireAdmin(request, env);
+    const target = await requireTarget(env, parseId(params.id));
+    const pos = parseId(params.pos);
+    if (pos >= CARD_SIZE) throw new HttpError(400, "Casilla inválida.");
+    const { action } = await readJson<{ action: string }>(request);
+    const cellAction = CELL_ACTIONS[action as keyof typeof CELL_ACTIONS];
+    if (!cellAction) throw new HttpError(400, "Acción inválida.");
+
+    const [updated] = await env.DB.batch([
+      env.DB.prepare(`UPDATE cells SET ${cellAction.sql} AND player_id = ? AND pos = ?`).bind(target.id, pos),
+      ...recomputeStats(env.DB, "id = ?", target.id),
+      bumpVersion(env.DB),
+    ]);
+    if (updated.meta.changes === 0) throw new HttpError(409, cellAction.error);
+    return json({ ok: true });
+  })
+
+  .on("PATCH", "/api/admin/players/:id", async (request, env, params) => {
+    const admin = await requireAdmin(request, env);
+    const target = await requireTarget(env, parseId(params.id));
+    const body = await readJson<{ isAdmin: boolean; unlock: boolean; rerolls: number }>(request);
+
+    const sets: string[] = [];
+    const binds: unknown[] = [];
+    if (body.isAdmin !== undefined) {
+      if (typeof body.isAdmin !== "boolean") throw new HttpError(400, "Valor de moderador inválido.");
+      if (!body.isAdmin && target.id === admin.id) {
+        throw new HttpError(400, "No puedes quitarte el rol de moderador.");
+      }
+      sets.push("is_admin = ?");
+      binds.push(body.isAdmin ? 1 : 0);
+    }
+    if (body.unlock === true) sets.push("failed_logins = 0", "locked_until = 0");
+    if (body.rerolls !== undefined) {
+      if (!Number.isInteger(body.rerolls) || body.rerolls < 0 || body.rerolls > MAX_REROLLS) {
+        throw new HttpError(400, `Los rerolls deben estar entre 0 y ${MAX_REROLLS}.`);
+      }
+      sets.push("rerolls = ?");
+      binds.push(body.rerolls);
+    }
+    if (sets.length === 0) throw new HttpError(400, "No hay cambios que aplicar.");
+
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE players SET ${sets.join(", ")} WHERE id = ?`).bind(...binds, target.id),
+      bumpVersion(env.DB),
+    ]);
+    return json({ ok: true });
+  })
+
+  .on("POST", "/api/admin/players/:id/reset-card", async (request, env, params) => {
+    await requireAdmin(request, env);
+    const target = await requireTarget(env, parseId(params.id));
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE players SET ${RESET_STATS_SQL} WHERE id = ?`).bind(target.id),
+      env.DB.prepare("DELETE FROM cells WHERE player_id = ?").bind(target.id),
+      dealCards(env.DB, "p.id = ?", target.id),
+      bumpVersion(env.DB),
+    ]);
+    return json({ ok: true });
   })
 
   .on("DELETE", "/api/admin/players/:id", async (request, env, params) => {

@@ -83,14 +83,17 @@
 
     <!-- Pestañas de Navegación -->
     <div class="flex border-b border-slate-800 overflow-x-auto">
-      <button data-tab="bingo" class="tab px-4 sm:px-5 py-3 text-sm font-bold border-b-2 flex items-center gap-2 whitespace-nowrap">
-        <span>🔴</span> Mi Cartón
+      <button data-tab="bingo" class="tab px-2.5 sm:px-5 py-3 text-xs sm:text-sm font-bold border-b-2 flex items-center gap-1.5 sm:gap-2 whitespace-nowrap">
+        <span>🔴</span><span><span class="hidden sm:inline">Mi </span>Cartón</span>
       </button>
-      <button data-tab="leaderboard" class="tab px-4 sm:px-5 py-3 text-sm font-bold border-b-2 flex items-center gap-2 whitespace-nowrap">
-        <span>🏆</span> Leaderboard
+      <button data-tab="leaderboard" class="tab px-2.5 sm:px-5 py-3 text-xs sm:text-sm font-bold border-b-2 flex items-center gap-1.5 sm:gap-2 whitespace-nowrap">
+        <span>🏆</span><span><span class="sm:hidden">Top</span><span class="hidden sm:inline">Leaderboard</span></span>
       </button>
-      <button data-tab="admin" id="tabAdmin" class="tab hidden px-4 sm:px-5 py-3 text-sm font-bold border-b-2 flex items-center gap-2 whitespace-nowrap">
-        <span>👑</span> Moderador <span id="badgePendientes" class="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full hidden">0</span>
+      <button data-tab="admin" id="tabAdmin" class="tab hidden px-2.5 sm:px-5 py-3 text-xs sm:text-sm font-bold border-b-2 flex items-center gap-1.5 sm:gap-2 whitespace-nowrap">
+        <span>👑</span><span>Mod<span class="hidden sm:inline">erador</span></span> <span id="badgePendientes" class="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full hidden">0</span>
+      </button>
+      <button data-tab="control" id="tabControl" class="tab hidden px-2.5 sm:px-5 py-3 text-xs sm:text-sm font-bold border-b-2 flex items-center gap-1.5 sm:gap-2 whitespace-nowrap">
+        <span>🎛</span> Control
       </button>
     </div>
 
@@ -147,11 +150,16 @@
     <section id="vistaAdmin" data-vista="admin" class="hidden space-y-4">
       <!-- Validaciones de Solicitudes -->
       <div class="bg-slate-800 border border-yellow-500/30 rounded-2xl p-4 sm:p-6 shadow-xl space-y-4">
-        <div>
-          <h2 class="text-lg font-bold text-yellow-400 flex items-center gap-2">
-            <span>👑</span> Validación General por Frases
-          </h2>
-          <p class="text-xs text-slate-400">Aprueba o rechaza una frase enviada por los entrenadores. Aplica a todos los que la marcaron.</p>
+        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+          <div>
+            <h2 class="text-lg font-bold text-yellow-400 flex items-center gap-2">
+              <span>👑</span> Validación General por Frases
+            </h2>
+            <p class="text-xs text-slate-400">Aprueba o rechaza una frase enviada por los entrenadores. Aplica a todos los que la marcaron.</p>
+          </div>
+          <button id="btnVaciar" class="shrink-0 bg-red-700 hover:bg-red-600 text-white font-bold text-xs px-3 py-1.5 rounded-lg transition border border-red-500" title="Cartones nuevos y progreso en cero para todos; las cuentas se conservan">
+            🗑 Vaciar Leaderboard
+          </button>
         </div>
         <div id="listaSolicitudesFrases" class="space-y-3">
           <p class="text-xs text-slate-400">No hay frases pendientes por revisar.</p>
@@ -173,18 +181,52 @@
         </div>
       </div>
 
-      <!-- Entrenadores -->
-      <div class="bg-slate-800 border border-slate-700 rounded-2xl p-4 sm:p-6 shadow-xl space-y-3">
-        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-          <h3 class="text-sm font-bold text-yellow-400 flex items-center gap-2">
-            <span>🧢</span> Entrenadores Registrados
-          </h3>
-          <button id="btnVaciar" class="bg-red-700 hover:bg-red-600 text-white font-bold text-xs px-3 py-1.5 rounded-lg transition border border-red-500">
-            🗑 Vaciar Leaderboard
-          </button>
+    </section>
+
+    <!-- VISTA 4: CONTROL POR ENTRENADOR -->
+    <section id="vistaControl" data-vista="control" class="hidden">
+      <div class="grid gap-4 md:grid-cols-5">
+        <!-- Lista de entrenadores -->
+        <div class="md:col-span-2 md:self-start bg-slate-800 border border-slate-700 rounded-2xl p-4 shadow-xl space-y-3">
+          <h2 class="text-sm font-bold text-yellow-400 flex items-center gap-2">
+            <span>🧢</span><span>Entrenadores (<span id="controlTotal">0</span>)</span>
+          </h2>
+          <input id="controlBuscar" type="search" autocomplete="off" placeholder="🔍 Buscar entrenador..." class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-yellow-500">
+          <ul id="controlLista" class="space-y-1 max-h-[60vh] overflow-y-auto"></ul>
         </div>
-        <p class="text-xs text-slate-400">Vaciar reparte cartones nuevos y pone a todos en cero, pero conserva las cuentas.</p>
-        <ul id="listaJugadores" class="divide-y divide-slate-700/60 text-sm"></ul>
+
+        <!-- Cartón y acciones del entrenador seleccionado -->
+        <div class="md:col-span-3 bg-slate-800 border border-slate-700 rounded-2xl p-3 sm:p-5 shadow-xl">
+          <p id="controlVacio" class="text-xs text-slate-400 text-center py-12">Selecciona un entrenador para ver su cartón.</p>
+          <div id="controlDetalle" class="hidden space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h2 class="text-lg font-bold text-yellow-400 flex items-center gap-2 min-w-0">
+                <span>🎴</span><span id="controlNombre" class="truncate"></span><span id="controlInsignias" class="text-sm"></span>
+              </h2>
+              <span id="controlEstado" class="px-2 py-1 rounded-full text-[10px] font-bold"></span>
+            </div>
+
+            <div class="grid grid-cols-4 gap-2 text-center text-[11px] text-slate-400">
+              <div class="bg-slate-900 border border-slate-700 rounded-xl py-2">Líneas<div id="controlLineas" class="text-base font-bold text-sky-400">0</div></div>
+              <div class="bg-slate-900 border border-slate-700 rounded-xl py-2">Aprobados<div id="controlPuntos" class="text-base font-bold text-green-400">0</div></div>
+              <div class="bg-slate-900 border border-slate-700 rounded-xl py-2">Pendientes<div id="controlPendientes" class="text-base font-bold text-yellow-400">0</div></div>
+              <div class="bg-slate-900 border border-slate-700 rounded-xl py-2">Rerolls<div id="controlRerolls" class="text-base font-bold text-slate-200">0</div></div>
+            </div>
+
+            <div id="gridControl" class="grid grid-cols-5 gap-1 sm:gap-2 bg-slate-900 p-1.5 sm:p-3 rounded-2xl border-2 border-slate-800"></div>
+            <p class="text-[11px] text-slate-500 text-center">Toca una casilla: ⏳ aprobar o rechazar · ✅ quitar aprobación · vacía para aprobar directo.</p>
+
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] font-bold">
+              <button id="ctlModerador" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-2 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed">👑 Hacer moderador</button>
+              <button id="ctlDesbloquear" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-2 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed">🔓 Desbloquear</button>
+              <button id="ctlClave" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-2 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed">🔑 Reset clave</button>
+              <button id="ctlReroll" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-2 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed">🔀 +1 reroll</button>
+              <button id="ctlRerollMax" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-2 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed">↺ Rerolls a 5</button>
+              <button id="ctlCarton" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-2 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed">♻️ Cartón nuevo</button>
+              <button id="ctlEliminar" class="bg-red-700/80 hover:bg-red-600 text-white px-3 py-2 rounded-lg transition">🗑 Eliminar</button>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -232,6 +274,16 @@
         <button type="submit" class="flex-1 bg-yellow-500 hover:bg-yellow-400 text-slate-950 font-bold py-2 rounded-xl text-xs">Guardar</button>
       </div>
     </form>
+  </div>
+
+  <!-- MODAL ACCIÓN SOBRE UNA CASILLA -->
+  <div id="modalElegir" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-xs w-full text-center space-y-4">
+      <h3 id="elegirTitulo" class="font-bold text-yellow-400 text-lg"></h3>
+      <p id="elegirTexto" class="text-sm font-semibold text-white italic break-words"></p>
+      <p id="elegirDetalle" class="text-[11px] text-slate-400"></p>
+      <div id="elegirOpciones" class="flex flex-col gap-2"></div>
+    </div>
   </div>
 
   <!-- MODAL CONFIRMACIÓN / INFORMACIÓN -->

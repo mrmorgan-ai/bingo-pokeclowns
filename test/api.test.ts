@@ -298,3 +298,133 @@ describe("moderator", () => {
     expect(after.leaderboard.map((p: any) => p.username)).toEqual(["Sycamore"]);
   });
 });
+
+describe("control panel", () => {
+  async function setup() {
+    const admin = await register("Lance");
+    await makeAdmin("Lance");
+    const player = await register("Trainee");
+    const players = (await admin.json("/api/admin/players")).players as any[];
+    const target = players.find((p) => p.username === "Trainee");
+    const self = players.find((p) => p.username === "Lance");
+    return { admin, player, target, self };
+  }
+
+  const cellAction = (c: Client, id: number, pos: number, action: string) =>
+    c.call(`/api/admin/players/${id}/cells/${pos}`, { method: "POST", body: { action } });
+
+  it("forbids every control endpoint to regular players", async () => {
+    const { player, target } = await setup();
+    expect((await player.call("/api/admin/players")).status).toBe(403);
+    expect((await player.call(`/api/admin/players/${target.id}/card`)).status).toBe(403);
+    expect((await cellAction(player, target.id, 0, "approve")).status).toBe(403);
+    expect((await player.call(`/api/admin/players/${target.id}`, { method: "PATCH", body: { rerolls: 5 } })).status).toBe(403);
+    expect((await player.call(`/api/admin/players/${target.id}/reset-card`, { method: "POST" })).status).toBe(403);
+  });
+
+  it("lists players with pending counts and shows one player's card", async () => {
+    const { admin, player, target } = await setup();
+    await player.call("/api/cells/3/toggle", { method: "POST" });
+    await player.call("/api/cells/7/toggle", { method: "POST" });
+
+    const listed = ((await admin.json("/api/admin/players")).players as any[]).find((p) => p.id === target.id);
+    expect(listed).toMatchObject({ username: "Trainee", pending: 2, isAdmin: false, locked: false, rerolls: 5 });
+
+    const detail = await admin.json(`/api/admin/players/${target.id}/card`);
+    expect(detail.player).toMatchObject({ id: target.id, pending: 2 });
+    expect(detail.card).toHaveLength(24);
+    expect(detail.card.filter((c: any) => c.state === "pending").map((c: any) => c.pos)).toEqual([3, 7]);
+    expect((await admin.call("/api/admin/players/99999/card")).status).toBe(404);
+  });
+
+  it("approves, rejects, revokes and directly approves single squares", async () => {
+    const { admin, player, target } = await setup();
+    await player.call("/api/cells/0/toggle", { method: "POST" });
+    await player.call("/api/cells/1/toggle", { method: "POST" });
+
+    expect((await cellAction(admin, target.id, 0, "approve")).status).toBe(200); // pending -> approved
+    expect((await cellAction(admin, target.id, 1, "reject")).status).toBe(200); // pending -> none
+    expect((await cellAction(admin, target.id, 2, "approve")).status).toBe(200); // none -> approved (direct)
+    let card = (await state(player)).me.card;
+    expect([card[0].state, card[1].state, card[2].state]).toEqual(["approved", "none", "approved"]);
+    expect((await state(player)).me.points).toBe(2);
+
+    expect((await cellAction(admin, target.id, 0, "revoke")).status).toBe(200); // approved -> none
+    card = (await state(player)).me.card;
+    expect(card[0].state).toBe("none");
+    expect((await state(player)).me.points).toBe(1);
+
+    // Only affects this player, not others holding the same phrase.
+    const other = await register("Bystander");
+    await other.call("/api/cells/0/toggle", { method: "POST" });
+    await cellAction(admin, target.id, 5, "approve");
+    expect((await state(other)).me.points).toBe(0);
+  });
+
+  it("rejects invalid square transitions and actions", async () => {
+    const { admin, target } = await setup();
+    expect((await cellAction(admin, target.id, 0, "reject")).status).toBe(409); // not pending
+    expect((await cellAction(admin, target.id, 0, "revoke")).status).toBe(409); // not approved
+    await cellAction(admin, target.id, 0, "approve");
+    expect((await cellAction(admin, target.id, 0, "approve")).status).toBe(409); // already approved
+    expect((await cellAction(admin, target.id, 0, "explode")).status).toBe(400);
+    expect((await cellAction(admin, target.id, 24, "approve")).status).toBe(400);
+    expect((await cellAction(admin, 99999, 0, "approve")).status).toBe(404);
+  });
+
+  it("recomputes lines and bingo when an approval is revoked", async () => {
+    const { admin, player, target } = await setup();
+    for (let pos = 0; pos < 24; pos++) await cellAction(admin, target.id, pos, "approve");
+    expect((await state(player)).me).toMatchObject({ points: 24, lines: 12, bingo: true });
+
+    await cellAction(admin, target.id, 0, "revoke"); // top-left: row 0, column 0 and one diagonal
+    const s = await state(player);
+    expect(s.me).toMatchObject({ points: 23, lines: 9, bingo: false });
+    expect(s.leaderboard.find((p: any) => p.username === "Trainee").bingoAt).toBeNull();
+  });
+
+  it("promotes and demotes moderators but never the caller", async () => {
+    const { admin, player, target, self } = await setup();
+    expect((await admin.call(`/api/admin/players/${target.id}`, { method: "PATCH", body: { isAdmin: true } })).status).toBe(200);
+    expect((await player.call("/api/admin/players")).status).toBe(200);
+    expect((await admin.call(`/api/admin/players/${target.id}`, { method: "PATCH", body: { isAdmin: false } })).status).toBe(200);
+    expect((await player.call("/api/admin/players")).status).toBe(403);
+
+    const selfDemote = await admin.call(`/api/admin/players/${self.id}`, { method: "PATCH", body: { isAdmin: false } });
+    expect(selfDemote.status).toBe(400);
+  });
+
+  it("unlocks accounts and adjusts rerolls within limits", async () => {
+    const { admin, target } = await setup();
+    for (let i = 0; i < 5; i++) {
+      await client().call("/api/auth/login", { method: "POST", body: { username: "Trainee", password: "mal" } });
+    }
+    let listed = ((await admin.json("/api/admin/players")).players as any[]).find((p) => p.id === target.id);
+    expect(listed.locked).toBe(true);
+
+    await admin.call(`/api/admin/players/${target.id}`, { method: "PATCH", body: { unlock: true, rerolls: 2 } });
+    listed = ((await admin.json("/api/admin/players")).players as any[]).find((p) => p.id === target.id);
+    expect(listed).toMatchObject({ locked: false, rerolls: 2 });
+    const login = await client().call("/api/auth/login", { method: "POST", body: { username: "Trainee", password: "secreto123" } });
+    expect(login.status).toBe(200);
+
+    expect((await admin.call(`/api/admin/players/${target.id}`, { method: "PATCH", body: { rerolls: 6 } })).status).toBe(400);
+    expect((await admin.call(`/api/admin/players/${target.id}`, { method: "PATCH", body: {} })).status).toBe(400);
+  });
+
+  it("re-deals one player's card and resets only their progress", async () => {
+    const { admin, player, target } = await setup();
+    const other = await register("Keeper");
+    const otherId = ((await admin.json("/api/admin/players")).players as any[]).find((p) => p.username === "Keeper").id;
+    await cellAction(admin, target.id, 0, "approve");
+    await cellAction(admin, otherId, 0, "approve");
+    await admin.call(`/api/admin/players/${target.id}`, { method: "PATCH", body: { rerolls: 3 } });
+
+    expect((await admin.call(`/api/admin/players/${target.id}/reset-card`, { method: "POST" })).status).toBe(200);
+    const me = (await state(player)).me;
+    expect(me).toMatchObject({ points: 0, lines: 0, rerolls: 3 });
+    expect(me.card).toHaveLength(24);
+    expect(me.card.every((c: any) => c.state === "none")).toBe(true);
+    expect((await state(other)).me.points).toBe(1);
+  });
+});

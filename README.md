@@ -80,6 +80,15 @@ Then register in the deployed app and promote yourself with the same `UPDATE` co
 - 5 rerolls per player: re-deals the same phrases in a new order and resets that player's progress.
 - Saving a new phrase bank (exactly 24) or "Vaciar Leaderboard" re-deals every card and resets progress; accounts are kept.
 
+## Moderator Control tab
+
+The 🎛 Control tab lists every trainer (lines, approved squares, pending requests, rerolls, 👑 moderator, 🔒 locked). Selecting one opens their card:
+
+- Tap a square to approve or reject a pending request, undo an approval, or approve a square directly. Only that player's card changes; their lines and bingo are recalculated immediately.
+- Account actions: make or remove a moderator, unlock after failed logins, +1 reroll or back to 5, deal a new card (rerolls unchanged), reset password, delete.
+- You can't remove your own moderator role or delete yourself, so there is always at least one moderator.
+- The tab refreshes only while it is open, so it adds requests for the moderator alone.
+
 ## Free tier budget (20 players)
 
 A 3-hour game polling every 4 s uses roughly 56k of the 100k daily Worker requests, ~1.6M of the 5M daily D1 rows read, and ~15k of the 100k rows written. For longer games raise `POLL_MS` in `public/app.js`: keep it above `0.72 × game hours` seconds (with headroom, about twice that). D1 stops answering queries once a daily limit is hit, until the reset at 00:00 UTC.
