@@ -1,0 +1,27 @@
+-- Initial phrase bank from the "Frases Random de Todos" sheet (rows 6-29).
+-- Moderators can replace it from the admin panel.
+INSERT INTO phrases (text) VALUES
+  ('Gavilan "Calla vejete"'),
+  ('Vivar: "Gavilan anciano"'),
+  ('Taringa "Ayayayai"'),
+  ('JP "Muteados"'),
+  ('Gavilan "Somos 5"'),
+  ('Woki habla de su cuy'),
+  ('Woki tiene lag'),
+  ('Pokemon "Ya fue, bajen pepa"'),
+  ('Woki "Fracasaauuu"'),
+  ('Pokemon estornuda Kawai'),
+  ('vivar dice pokemon cachudo'),
+  ('vivar menciona a la prima de cualquiera'),
+  ('Robinson entra y sale del discord en menos de 5 segundos'),
+  ('JP "Calla sonso"'),
+  ('AXL : "practicante de mrd"'),
+  ('taringa : no quieo ir roshan'),
+  ('taringa: jeuga lento'),
+  ('blue: haré stacks'),
+  ('woki: hoy estoy disparando mal'),
+  ('vivar: calla imbecil'),
+  ('vivar: pokemon kachudo'),
+  ('gavilan: ese eres tu'),
+  ('Gavilan: vayanse a la mrd, juego solo'),
+  ('pokemon: sr rotz, yo no le tengo miedo');
